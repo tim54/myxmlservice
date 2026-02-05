@@ -11,6 +11,7 @@ public class TestExerciseUtility {
 
     public static void doExercise(XmlParserService xmlParserService, GPathResult doc){
         xmlParserService.parseXML(doc);
+        xmlParserService.getTableDDL("currencies"); // categories, offers
 
 //        List<String> tableNames = xmlParserService.getTableNames(doc);
 //

@@ -18,7 +18,8 @@ import java.util.regex.Pattern;
 @Service
 public class XmlParserService {
 
-    private static final Pattern SQL_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private final List<Table> tables = new ArrayList<>();
+    private final List<String> tableNames = new ArrayList<>();
 
     public GPathResult readFromFile(Path xmlPath) {
         if (xmlPath == null) throw new IllegalArgumentException("xmlPath не должен быть null");
@@ -49,41 +50,12 @@ public class XmlParserService {
         }
     }
 
-    public List<String> getTableNames(GPathResult document) {
-        if (document == null) throw new IllegalArgumentException("document не должен быть null");
-
-        Object shopObj = document.getProperty("shop");
-        if (!(shopObj instanceof GPathResult shop)) {
-            return List.of();
-        }
-
-        GPathResult children = shop.children();
-
-        Set<String> names = new LinkedHashSet<>();
-        for (Object child : children) {
-            if (child instanceof GPathResult childNode) {
-                String nodeName = childNode.name();
-                if (nodeName == null || nodeName.isBlank()) {
-                    continue;
-                }
-
-                boolean hasElementChildren = false;
-                for (Object grandChild : childNode.children()) {
-                    if (grandChild instanceof GPathResult) {
-                        hasElementChildren = true;
-                        break;
-                    }
-                }
-
-                String text = childNode.text();
-                boolean hasNoText = text == null || text.trim().isEmpty();
-
-                if (hasElementChildren || hasNoText) {
-                    names.add(nodeName);
-                }
-            }
-        }
-        return new ArrayList<>(names);
+    /**
+     * Возвращает названия таблиц из XML (currency, categories, offers)
+     * @return ArrayList
+     */
+    public List<String> getTableNames() {
+        return tableNames;
     }
 
     public void parseXML(GPathResult document) {
@@ -105,45 +77,79 @@ public class XmlParserService {
                 }
 
                 boolean hasElementChildren = false;
-                List<Table> tables = new ArrayList<>();
 
-                for (Object grandChild : childNode.children()) {
-                    if (grandChild instanceof GPathResult grandChildNode) {
+                if (!childNode.children().isEmpty()) {
+                    Table table = new Table();
+                    table.setName(nodeName);
 
-                        Table table = new Table();
-                        table.setName(nodeName);
+                    List<Map.Entry<String, SqlType>> columns = new ArrayList<>();
+                    for (Object grandChild : childNode.children()) {
+                        if (grandChild instanceof GPathResult grandChildNode) {
 
-                        Map<String, String> attrs = getAttributes(grandChildNode);
+                            Map<String, String> attrs = getAttributes(grandChildNode);
 
-                        String text = grandChildNode.text();
-                        text = (text == null) ? "" : text.trim();
+                            String text = grandChildNode.text();
+                            text = (text == null) ? "" : text.trim();
 
-                        System.out.println("node: " + grandChildNode.name());
-                        if (!attrs.isEmpty()) {
-                            System.out.println("attributes: " + attrs);
+                            System.out.println("node: " + grandChildNode.name());
+                            if (!attrs.isEmpty()) {
+                                System.out.println("attributes: " + attrs);
+                            }
+                            if (!text.isEmpty()) {
+                                System.out.println("text: " + text);
+                            }
+                            System.out.println();
+
+                            for (Map.Entry<String, String> attr : attrs.entrySet()) {
+                                Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(attr.getKey(), detect(attr.getValue()));
+                                System.out.println(column);
+
+                                if (columns.contains(column)){
+//                                    System.out.println("duplicate column: " + column);
+                                    continue;
+                                }
+                                columns.add(column);
+                            }
+
+                            boolean hasKids = hasElementChildren(grandChildNode);
+                            boolean hasText = grandChildNode.text() != null && !grandChildNode.text().trim().isEmpty();
+                            if (hasKids) {
+                                int paramIndex = 0;
+
+                                for (Object grandGrandChild : grandChildNode.children()) {
+                                    if (grandGrandChild instanceof GPathResult grandGrandChildNode) {
+                                        String name1 = grandGrandChildNode.name();
+                                        String text1 = grandGrandChildNode.text();
+
+                                        if (name1.equals("param")){
+                                            name1 = "param_" + paramIndex++;
+                                        }
+
+                                        Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, detect(text1));
+
+                                        if (columns.contains(column)){
+                                            continue;
+                                        }
+                                        columns.add(column);
+                                    }
+                                }
+                            } else if (hasText) {
+
+                                String name1 = grandChildNode.name();
+                                String text1 = grandChildNode.text();
+
+                                Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, SqlType.VARCHAR);
+
+                                if (columns.contains(column)){
+                                    continue;
+                                }
+                                columns.add(column);
+                            }
                         }
-                        if (!text.isEmpty()) {
-                            System.out.println("text: " + text);
-                        }
-                        System.out.println();
-
-                        List<Map.Entry<String, SqlType>> columns = new ArrayList<>();
-                        for (Map.Entry<String, String> attr : attrs.entrySet()) {
-                            Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(attr.getKey(), detect(attr.getValue()));
-                            System.out.println(column);
-                            columns.add(column);
-                        }
-
-                        table.setColumns(columns);
-                        tables.add(table);
                     }
-                }
-
-                String text = childNode.text();
-                boolean hasNoText = text == null || text.trim().isEmpty();
-
-                if (hasElementChildren || hasNoText) {
-                    names.add(nodeName);
+                    table.setColumns(columns);
+                    tables.add(table);
+                    tableNames.add(table.getName());
                 }
             }
         }
@@ -183,11 +189,19 @@ public class XmlParserService {
         return v.matches("\\d{4}-\\d{2}-\\d{2}T.*");
     }
 
+    boolean hasElementChildren(GPathResult node) {
+        for (Object ch : node.children()) {
+            if (ch instanceof NodeChild) {
+                return true; // found an element child
+            }
+        }
+        return false;
+    }
+
     public Map<String, String> getAttributes(GPathResult node) {
         if (node == null) throw new IllegalArgumentException("node не должен быть null");
 
         if (!(node instanceof NodeChild nodeChild)) {
-            // If this is NodeChildren / other GPathResult, we don't have a single node to read attributes from
             return Map.of();
         }
 
@@ -214,20 +228,37 @@ public class XmlParserService {
         if (tableName == null || tableName.isBlank()) {
             throw new IllegalArgumentException("tableName не должен быть пустым");
         }
-        if (!SQL_IDENTIFIER.matcher(tableName).matches()) {
-            throw new IllegalArgumentException("Некорректное имя таблицы: " + tableName);
+
+        Table table = tables.stream().filter(t -> t.getName().equals(tableName)).findFirst().orElse(null);
+        if (table == null) {
+            throw new IllegalArgumentException("Таблица не найдена: " + tableName);
+        }
+        String t = quoteIdentifier(tableName);
+
+        StringBuilder sqlDDLColumns = new StringBuilder();
+        for (Map.Entry<String, SqlType> column : table.getColumns()) {
+
+            if (column.getKey().equals("id"))
+                sqlDDLColumns.append("id BIGSERIAL PRIMARY KEY,\n");
+
+            sqlDDLColumns.append(String.format("%s %s, \n", column.getKey(), column.getValue().getSql()));
         }
 
-        String t = quoteIdentifier(tableName);
+        String tmp = """
+               CREATE TABLE IF NOT EXISTS %s (
+                   %s
+                   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+               );
+               """.formatted(t, sqlDDLColumns);
+
+        System.out.println(tmp);
 
         return """
                CREATE TABLE IF NOT EXISTS %s (
-                   id BIGSERIAL PRIMARY KEY,
-                   source VARCHAR(1024),
-                   payload XML NOT NULL,
+                   %s
                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                );
-               """.formatted(t);
+               """.formatted(t, sqlDDLColumns);
     }
 
     private String quoteIdentifier(String identifier) {
