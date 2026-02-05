@@ -5,6 +5,7 @@ import com.example.myxmlparser.domain.Table;
 import groovy.xml.XmlSlurper;
 import groovy.xml.slurpersupport.GPathResult;
 import groovy.xml.slurpersupport.NodeChild;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
@@ -16,6 +17,7 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 @Service
+@Slf4j
 public class XmlParserService {
 
     private final List<Table> tables = new ArrayList<>();
@@ -91,18 +93,18 @@ public class XmlParserService {
                             String text = grandChildNode.text();
                             text = (text == null) ? "" : text.trim();
 
-                            System.out.println("node: " + grandChildNode.name());
+//                            System.out.println("node: " + grandChildNode.name());
                             if (!attrs.isEmpty()) {
-                                System.out.println("attributes: " + attrs);
+//                                System.out.println("attributes: " + attrs);
                             }
                             if (!text.isEmpty()) {
-                                System.out.println("text: " + text);
+//                                System.out.println("text: " + text);
                             }
-                            System.out.println();
+//                            System.out.println();
 
                             for (Map.Entry<String, String> attr : attrs.entrySet()) {
                                 Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(attr.getKey(), detect(attr.getValue()));
-                                System.out.println(column);
+//                                System.out.println(column);
 
                                 if (columns.contains(column)){
 //                                    System.out.println("duplicate column: " + column);
@@ -125,7 +127,7 @@ public class XmlParserService {
                                             name1 = "param_" + paramIndex++;
                                         }
 
-                                        Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, detect(text1));
+                                        Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, SqlType.VARCHAR);
 
                                         if (columns.contains(column)){
                                             continue;
@@ -138,7 +140,7 @@ public class XmlParserService {
                                 String name1 = grandChildNode.name();
                                 String text1 = grandChildNode.text();
 
-                                Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, SqlType.VARCHAR);
+                                Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, detect(text1));
 
                                 if (columns.contains(column)){
                                     continue;
@@ -240,8 +242,8 @@ public class XmlParserService {
 
             if (column.getKey().equals("id"))
                 sqlDDLColumns.append("id BIGSERIAL PRIMARY KEY,\n");
-
-            sqlDDLColumns.append(String.format("%s %s, \n", column.getKey(), column.getValue().getSql()));
+            else
+                sqlDDLColumns.append(String.format("%s %s, \n", column.getKey(), column.getValue().getSql()));
         }
 
         String tmp = """
