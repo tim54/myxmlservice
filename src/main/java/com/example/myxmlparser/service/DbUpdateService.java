@@ -20,12 +20,55 @@ public class DbUpdateService {
     private final JdbcTemplate jdbcTemplate;
     private final DataSource dataSource;
 
+    /**
+     * Создает таблицы в БД на основании XML
+     * Если таблица уже существует — проверяет структуру
+     * При отличиях кидает SchemaMismatchException.
+     */
+    public void create() {
+        for (String tableName : xmlParserService.getTableNames()) {
+            create(tableName);
+        }
+    }
+
+    /**
+     * Создает таблицу в БД на основании XML.
+     * Если таблица уже существует — проверяет структуру
+     * При отличиях кидает SchemaMismatchException.
+     * @param tableName имя таблицы из XML
+     */
+    public void create(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("tableName не должен быть пустым");
+        }
+
+        Table xmlDef = xmlParserService.getTableDefinition(tableName);
+
+        if (tableExists(tableName)) {
+            assertSchemaSameOrThrow(tableName, xmlDef);
+            return; // уже создана и структура совпадает
+        }
+
+        String ddl = xmlParserService.getTableDDL(tableName);
+        jdbcTemplate.execute(ddl);
+    }
+
+    /**
+     * обновляет данные в таблицах бд
+     * на основе Id
+     * если поменялась структура выдает exception
+     */
     public void update() {
         for (String tableName : xmlParserService.getTableNames()) {
             update(tableName);
         }
     }
 
+    /**
+     * обновляет данные в таблицах бд
+     * если поменялась структура выдает exception
+     * @param tableName
+     */
     public void update(String tableName) {
         if (tableName == null || tableName.isBlank()) {
             throw new IllegalArgumentException("tableName не должен быть пустым");
@@ -39,7 +82,7 @@ public class DbUpdateService {
         for (Map<String, Object> row : rows) {
             Object id = row.get("id");
             if (id == null || String.valueOf(id).isBlank()) {
-                throw new IllegalArgumentException("В XML нет обязательного поля/атрибута id для таблицы: " + tableName);
+                throw new IllegalArgumentException("В XML нет обязательного атрибута id для таблицы: " + tableName);
             }
 
             Map<String, Object> updatable = new LinkedHashMap<>(row);
@@ -70,6 +113,18 @@ public class DbUpdateService {
             args.add(id);
 
             jdbcTemplate.update(sql, args.toArray());
+        }
+    }
+
+    private boolean tableExists(String tableName) {
+        try (Connection c = dataSource.getConnection()) {
+            DatabaseMetaData meta = c.getMetaData();
+
+            try (ResultSet rs = meta.getTables(null, "public", tableName, new String[]{"TABLE"})) {
+                return rs.next();
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Не удалось проверить существование таблицы: " + tableName, e);
         }
     }
 

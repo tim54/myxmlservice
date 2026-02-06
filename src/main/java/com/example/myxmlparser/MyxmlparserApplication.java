@@ -1,5 +1,6 @@
 package com.example.myxmlparser;
 
+import com.example.myxmlparser.service.DbUpdateService;
 import com.example.myxmlparser.utility.TestExerciseUtility;
 import com.example.myxmlparser.service.XmlParserService;
 import groovy.xml.slurpersupport.GPathResult;
@@ -19,7 +20,7 @@ public class MyxmlparserApplication {
 	}
 
     @Bean
-    ApplicationRunner xmlParserRunner(XmlParserService xmlParserService) {
+    ApplicationRunner xmlParserRunner(XmlParserService xmlParserService, DbUpdateService dbUpdateService) {
         return args -> {
 
             String fileArg = args.getOptionValues("xml.file") == null ? null : args.getOptionValues("xml.file").getFirst();
@@ -36,7 +37,7 @@ public class MyxmlparserApplication {
                 return;
             }
 
-            TestExerciseUtility.doExercise(xmlParserService, doc);
+            TestExerciseUtility.doExercise(xmlParserService, doc, dbUpdateService);
         };
     }
 
