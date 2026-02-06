@@ -1,14 +1,18 @@
 package com.example.myxmlparser.service;
 
+import com.example.myxmlparser.domain.SqlType;
 import com.example.myxmlparser.domain.Table;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -79,6 +83,14 @@ public class DbUpdateService {
 
         List<Map<String, Object>> rows = xmlParserService.getTableRows(tableName);
 
+        Map<String, SqlType> columnTypes = xmlDef.getColumns().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> (SqlType) e.getValue(),
+                        (a, b) -> a,
+                        LinkedHashMap::new
+                ));
+
         for (Map<String, Object> row : rows) {
             Object id = row.get("id");
             if (id == null || String.valueOf(id).isBlank()) {
@@ -102,18 +114,167 @@ public class DbUpdateService {
                 continue;
             }
 
-            String setClause = updatable.keySet().stream()
+            Map<String, Object> converted = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> e : updatable.entrySet()) {
+                String col = e.getKey();
+                SqlType type = columnTypes.get(col);
+                converted.put(col, coerceValue(tableName, col, type, e.getValue()));
+            }
+
+            String setClause = converted.keySet().stream()
                     .map(this::quoteIdentifier)
                     .map(c -> c + " = ?")
                     .collect(Collectors.joining(", "));
 
             String sql = "UPDATE " + quoteIdentifier(tableName) + " SET " + setClause + " WHERE id = ?";
 
-            List<Object> args = new ArrayList<>(updatable.values());
+            System.out.println(sql);
+
+            List<Object> args = new ArrayList<>(converted.values());
             args.add(id);
 
             jdbcTemplate.update(sql, args.toArray());
         }
+    }
+
+    private Object coerceValue(String tableName, String column, SqlType type, Object raw) {
+        if (raw == null) {
+            return null;
+        }
+
+        if (raw instanceof String s && s.isBlank()) {
+            return null;
+        }
+
+        if (type == null) {
+            return raw;
+        }
+
+        try {
+            return switch (type) {
+                case INT -> {
+                    if (raw instanceof Integer i) yield i;
+                    if (raw instanceof Number n) yield n.intValue();
+                    yield Integer.parseInt(raw.toString().trim());
+                }
+                case BIGINT -> {
+                    if (raw instanceof Long l) yield l;
+                    if (raw instanceof Number n) yield n.longValue();
+                    yield Long.parseLong(raw.toString().trim());
+                }
+                case DECIMAL -> {
+                    if (raw instanceof BigDecimal bd) yield bd;
+                    if (raw instanceof Number n) yield BigDecimal.valueOf(n.doubleValue());
+                    yield new BigDecimal(raw.toString().trim().replace(',', '.'));
+                }
+                case BOOLEAN -> {
+                    if (raw instanceof Boolean b) yield b;
+                    String s = raw.toString().trim().toLowerCase(Locale.ROOT);
+                    if (s.equals("1") || s.equals("true") || s.equals("t") || s.equals("yes")) yield true;
+                    if (s.equals("0") || s.equals("false") || s.equals("f") || s.equals("no")) yield false;
+                    yield Boolean.parseBoolean(s);
+                }
+                case DATE -> {
+                    if (raw instanceof LocalDate d) yield d;
+                    yield LocalDate.parse(raw.toString().trim());
+                }
+                case TIMESTAMP -> {
+                    if (raw instanceof LocalDateTime dt) yield dt;
+                    // Accept ISO-8601 like "2024-01-31T12:34:56"
+                    yield LocalDateTime.parse(raw.toString().trim());
+                }
+                case VARCHAR -> raw.toString();
+            };
+        } catch (Exception ex) {
+            throw new IllegalArgumentException(
+                    "Не удалось преобразовать значение для " + tableName + "." + column
+                            + " к типу " + type.getSql() + ": raw=" + raw + " (" + raw.getClass().getName() + ")",
+                    ex
+            );
+        }
+    }
+
+    /**
+     * Удаляетвсе таблицы в схеме.
+     * @param cascade если true — удалит зависимые объекты
+     */
+    public void dropAllTables(boolean cascade) {
+        dropAllTablesInSchema("public", cascade);
+    }
+
+    /**
+     * Удаляет (DROP) все таблицы в указанной схеме.
+     */
+    public void dropAllTablesInSchema(String schema, boolean cascade) {
+        if (schema == null || schema.isBlank()) {
+            throw new IllegalArgumentException("schema не должен быть пустым");
+        }
+
+        List<String> tableNames = listTables(schema);
+
+        // Чтобы меньше страдать от зависимостей, можно дропать в обратном порядке (не всегда нужно, но помогает).
+        Collections.reverse(tableNames);
+
+        for (String tableName : tableNames) {
+            dropTable(schema, tableName, cascade);
+        }
+    }
+
+    /**
+     * Удаляет (DROP) только указанные таблицы.
+     * Имена таблиц должны быть "логическими" (без кавычек); кавычки добавляются автоматически.
+     */
+    public void dropTables(Collection<String> tableNames, boolean cascade) {
+        dropTablesInSchema("public", tableNames, cascade);
+    }
+
+    /**
+     * Удаляет (DROP) только указанные таблицы в указанной схеме.
+     */
+    public void dropTablesInSchema(String schema, Collection<String> tableNames, boolean cascade) {
+        if (schema == null || schema.isBlank()) {
+            throw new IllegalArgumentException("schema не должен быть пустым");
+        }
+        if (tableNames == null) {
+            throw new IllegalArgumentException("tableNames не должен быть null");
+        }
+
+        for (String tableName : tableNames) {
+            if (tableName == null || tableName.isBlank()) {
+                throw new IllegalArgumentException("tableName не должен быть пустым");
+            }
+            dropTable(schema, tableName, cascade);
+        }
+    }
+
+    /**
+     * DROP TABLE IF EXISTS "schema"."table" [CASCADE]
+     */
+    private void dropTable(String schema, String tableName, boolean cascade) {
+        String sql = "DROP TABLE IF EXISTS "
+                + quoteQualifiedIdentifier(schema, tableName)
+                + (cascade ? " CASCADE" : "");
+
+        jdbcTemplate.execute(sql);
+    }
+
+    private List<String> listTables(String schema) {
+        try (Connection c = dataSource.getConnection()) {
+            DatabaseMetaData meta = c.getMetaData();
+            try (ResultSet rs = meta.getTables(null, schema, null, new String[]{"TABLE"})) {
+                List<String> names = new ArrayList<>();
+                while (rs.next()) {
+                    names.add(rs.getString("TABLE_NAME"));
+                }
+                return names;
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Не удалось получить список таблиц в схеме: " + schema, e);
+        }
+    }
+
+    private String quoteQualifiedIdentifier(String schema, String identifier) {
+        return quoteIdentifier(schema) + "." + quoteIdentifier(identifier);
     }
 
     private boolean tableExists(String tableName) {
@@ -144,7 +305,7 @@ public class DbUpdateService {
             throw new SchemaMismatchException(
                     "Структура таблицы в БД отличается от XML для '" + tableName + "'.\n" +
                             "XML: " + expected + "\n" +
-                            "DB: " + actual + "\n"
+                            "DB: " + actualMinusService + "\n"
             );
         }
     }
@@ -171,6 +332,6 @@ public class DbUpdateService {
     }
 
     private String quoteIdentifier(String identifier) {
-        return "\"" + identifier + "\"";
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 }

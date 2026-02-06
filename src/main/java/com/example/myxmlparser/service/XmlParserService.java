@@ -235,7 +235,7 @@ public class XmlParserService {
         for (Map.Entry<String, SqlType> column : table.getColumns()) {
 
             if (column.getKey().equals("id"))
-                sqlDDLColumns.append("id PRIMARY KEY,\n");
+                sqlDDLColumns.append("id " + column.getValue().getSql() + " PRIMARY KEY,\n");
             else
                 sqlDDLColumns.append(String.format("%s %s, \n", column.getKey(), column.getValue().getSql()));
         }

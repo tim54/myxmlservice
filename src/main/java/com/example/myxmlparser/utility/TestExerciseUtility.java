@@ -13,9 +13,11 @@ public class TestExerciseUtility {
     public static void doExercise(XmlParserService xmlParserService, GPathResult doc, DbUpdateService dbUpdateService){
         xmlParserService.parseXML(doc);
 
-//        for (String tableName : xmlParserService.getTableNames()) {
-//            xmlParserService.getTableDDL(tableName); // categories, offers
-//        }
+        for (String tableName : xmlParserService.getTableNames()) {
+            xmlParserService.getTableDDL(tableName); // categories, offers
+        }
+
+//        dbUpdateService.dropAllTables(false);
 
         dbUpdateService.create();
 //        dbUpdateService.update();
