@@ -23,6 +23,8 @@ public class XmlParserService {
     private final List<Table> tables = new ArrayList<>();
     private final List<String> tableNames = new ArrayList<>();
 
+    private GPathResult lastDocument;
+
     public GPathResult readFromFile(Path xmlPath) {
         if (xmlPath == null) throw new IllegalArgumentException("xmlPath не должен быть null");
 
@@ -63,6 +65,11 @@ public class XmlParserService {
     public void parseXML(GPathResult document) {
         if (document == null) throw new IllegalArgumentException("document не должен быть null");
 
+        this.lastDocument = document;
+
+        tables.clear();
+        tableNames.clear();
+
         Object shopObj = document.getProperty("shop");
         if (!(shopObj instanceof GPathResult shop)) {
             return;
@@ -70,15 +77,12 @@ public class XmlParserService {
 
         GPathResult children = shop.children();
 
-        Set<String> names = new LinkedHashSet<>();
         for (Object child : children) {
             if (child instanceof GPathResult childNode) {
                 String nodeName = childNode.name();
                 if (nodeName == null || nodeName.isBlank()) {
                     continue;
                 }
-
-                boolean hasElementChildren = false;
 
                 if (!childNode.children().isEmpty()) {
                     Table table = new Table();
@@ -93,21 +97,11 @@ public class XmlParserService {
                             String text = grandChildNode.text();
                             text = (text == null) ? "" : text.trim();
 
-//                            System.out.println("node: " + grandChildNode.name());
-                            if (!attrs.isEmpty()) {
-//                                System.out.println("attributes: " + attrs);
-                            }
-                            if (!text.isEmpty()) {
-//                                System.out.println("text: " + text);
-                            }
-//                            System.out.println();
-
                             for (Map.Entry<String, String> attr : attrs.entrySet()) {
-                                Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(attr.getKey(), detect(attr.getValue()));
-//                                System.out.println(column);
+                                Map.Entry<String, SqlType> column =
+                                        new AbstractMap.SimpleEntry<>(attr.getKey(), detect(attr.getValue()));
 
-                                if (columns.contains(column)){
-//                                    System.out.println("duplicate column: " + column);
+                                if (columns.contains(column)) {
                                     continue;
                                 }
                                 columns.add(column);
@@ -121,28 +115,28 @@ public class XmlParserService {
                                 for (Object grandGrandChild : grandChildNode.children()) {
                                     if (grandGrandChild instanceof GPathResult grandGrandChildNode) {
                                         String name1 = grandGrandChildNode.name();
-                                        String text1 = grandGrandChildNode.text();
 
-                                        if (name1.equals("param")){
+                                        if (name1.equals("param")) {
                                             name1 = "param_" + paramIndex++;
                                         }
 
-                                        Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, SqlType.VARCHAR);
+                                        Map.Entry<String, SqlType> column =
+                                                new AbstractMap.SimpleEntry<>(name1, SqlType.VARCHAR);
 
-                                        if (columns.contains(column)){
+                                        if (columns.contains(column)) {
                                             continue;
                                         }
                                         columns.add(column);
                                     }
                                 }
                             } else if (hasText) {
-
                                 String name1 = grandChildNode.name();
                                 String text1 = grandChildNode.text();
 
-                                Map.Entry<String, SqlType> column = new AbstractMap.SimpleEntry<>(name1, detect(text1));
+                                Map.Entry<String, SqlType> column =
+                                        new AbstractMap.SimpleEntry<>(name1, detect(text1));
 
-                                if (columns.contains(column)){
+                                if (columns.contains(column)) {
                                     continue;
                                 }
                                 columns.add(column);
@@ -241,7 +235,7 @@ public class XmlParserService {
         for (Map.Entry<String, SqlType> column : table.getColumns()) {
 
             if (column.getKey().equals("id"))
-                sqlDDLColumns.append("id BIGSERIAL PRIMARY KEY,\n");
+                sqlDDLColumns.append("id PRIMARY KEY,\n");
             else
                 sqlDDLColumns.append(String.format("%s %s, \n", column.getKey(), column.getValue().getSql()));
         }
@@ -265,6 +259,89 @@ public class XmlParserService {
 
     private String quoteIdentifier(String identifier) {
         return "\"" + identifier + "\"";
+    }
+
+    /**
+     * Возвращает строки для tableName для обновления из последнего XML.
+     * Обновление потом по ключу "id".
+     */
+    public List<Map<String, Object>> getTableRows(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("tableName не должен быть пустым");
+        }
+        if (lastDocument == null) {
+            throw new IllegalStateException("XML еще не распарсен: вызовите parseXML(document) перед getTableRows()");
+        }
+
+        Object shopObj = lastDocument.getProperty("shop");
+        if (!(shopObj instanceof GPathResult shop)) {
+            return List.of();
+        }
+
+        Object tableNodeObj = shop.getProperty(tableName);
+        if (!(tableNodeObj instanceof GPathResult tableNode)) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        for (Object rowObj : tableNode.children()) {
+            if (!(rowObj instanceof GPathResult rowNode)) {
+                continue;
+            }
+
+            Map<String, Object> row = new LinkedHashMap<>();
+
+            Map<String, String> attrs = getAttributes(rowNode);
+            for (Map.Entry<String, String> a : attrs.entrySet()) {
+                row.put(a.getKey(), a.getValue());
+            }
+
+            int paramIndex = 0;
+            boolean hasKids = hasElementChildren(rowNode);
+            boolean hasText = rowNode.text() != null && !rowNode.text().trim().isEmpty();
+
+            if (hasKids) {
+                for (Object chObj : rowNode.children()) {
+                    if (!(chObj instanceof GPathResult ch)) continue;
+
+                    String colName = ch.name();
+                    if ("param".equals(colName)) {
+                        colName = "param_" + paramIndex++;
+                    }
+
+                    String value = ch.text();
+                    value = value == null ? null : value.trim();
+
+                    Map<String, String> childAttrs = getAttributes(ch);
+                    for (Map.Entry<String, String> ca : childAttrs.entrySet()) {
+                        row.putIfAbsent(ca.getKey(), ca.getValue());
+                    }
+
+                    row.put(colName, value);
+                }
+            } else if (hasText) {
+                String colName = rowNode.name();
+                String value = rowNode.text().trim();
+                row.put(colName, value);
+            }
+
+            if (!row.isEmpty()) {
+                rows.add(row);
+            }
+        }
+
+        return rows;
+    }
+
+    public Table getTableDefinition(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("tableName не должен быть пустым");
+        }
+        return tables.stream()
+                .filter(t -> tableName.equals(t.getName()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Таблица не найдена: " + tableName));
     }
 
     private XmlSlurper slurper() throws Exception {
