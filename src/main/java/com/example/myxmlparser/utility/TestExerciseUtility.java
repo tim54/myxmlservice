@@ -19,8 +19,8 @@ public class TestExerciseUtility {
 
 //        dbUpdateService.dropAllTables(false);
 
-        dbUpdateService.create();
-//        dbUpdateService.update();
+//        dbUpdateService.create();
+        dbUpdateService.update();
 
 //        List<String> tableNames = xmlParserService.getTableNames(doc);
 //

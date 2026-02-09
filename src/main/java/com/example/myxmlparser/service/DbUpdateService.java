@@ -128,10 +128,10 @@ public class DbUpdateService {
 
             String sql = "UPDATE " + quoteIdentifier(tableName) + " SET " + setClause + " WHERE id = ?";
 
-            System.out.println(sql);
+//            System.out.println(sql);
 
             List<Object> args = new ArrayList<>(converted.values());
-            args.add(id);
+            args.add(coerceValue(tableName, "id", columnTypes.get("id"), id));
 
             jdbcTemplate.update(sql, args.toArray());
         }

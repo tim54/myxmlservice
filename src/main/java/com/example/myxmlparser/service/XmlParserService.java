@@ -99,7 +99,7 @@ public class XmlParserService {
 
                             for (Map.Entry<String, String> attr : attrs.entrySet()) {
                                 Map.Entry<String, SqlType> column =
-                                        new AbstractMap.SimpleEntry<>(attr.getKey(), detect(attr.getValue()));
+                                        new AbstractMap.SimpleEntry<>(attr.getKey().toLowerCase(), detect(attr.getValue()));
 
                                 if (columns.contains(column)) {
                                     continue;
@@ -121,7 +121,7 @@ public class XmlParserService {
                                         }
 
                                         Map.Entry<String, SqlType> column =
-                                                new AbstractMap.SimpleEntry<>(name1, SqlType.VARCHAR);
+                                                new AbstractMap.SimpleEntry<>(name1.toLowerCase(), SqlType.VARCHAR);
 
                                         if (columns.contains(column)) {
                                             continue;
@@ -294,7 +294,7 @@ public class XmlParserService {
 
             Map<String, String> attrs = getAttributes(rowNode);
             for (Map.Entry<String, String> a : attrs.entrySet()) {
-                row.put(a.getKey(), a.getValue());
+                row.put(a.getKey().toLowerCase(), a.getValue());
             }
 
             int paramIndex = 0;
@@ -315,7 +315,7 @@ public class XmlParserService {
 
                     Map<String, String> childAttrs = getAttributes(ch);
                     for (Map.Entry<String, String> ca : childAttrs.entrySet()) {
-                        row.putIfAbsent(ca.getKey(), ca.getValue());
+                        row.putIfAbsent(ca.getKey().toLowerCase(), ca.getValue());
                     }
 
                     row.put(colName, value);
