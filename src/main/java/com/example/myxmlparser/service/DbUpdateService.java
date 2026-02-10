@@ -86,33 +86,31 @@ public class DbUpdateService {
         Map<String, SqlType> columnTypes = xmlDef.getColumns().stream()
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
-                        e -> (SqlType) e.getValue(),
+                        Map.Entry::getValue,
                         (a, b) -> a,
                         LinkedHashMap::new
                 ));
 
+        if (!columnTypes.containsKey("id")) {
+            throw new IllegalArgumentException("В XML-описании таблицы нет обязательной колонки id: " + tableName);
+        }
+
+        // фильтруем только те колонки, которые есть в XML-описании (включая id)
+        Set<String> allowedCols = xmlDef.getColumns().stream()
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
         for (Map<String, Object> row : rows) {
-            Object id = row.get("id");
-            if (id == null || String.valueOf(id).isBlank()) {
+            Object rawId = row.get("id");
+            if (rawId == null || String.valueOf(rawId).isBlank()) {
                 throw new IllegalArgumentException("В XML нет обязательного атрибута id для таблицы: " + tableName);
             }
 
+            Object id = coerceValue(tableName, "id", columnTypes.get("id"), rawId);
+
             Map<String, Object> updatable = new LinkedHashMap<>(row);
-            updatable.remove("id");
-
-            if (updatable.isEmpty()) {
-                continue;
-            }
-
-            // фильтруем только те колонки, которые есть в XML-описании
-            Set<String> allowedCols = xmlDef.getColumns().stream()
-                    .map(Map.Entry::getKey)
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
             updatable.entrySet().removeIf(e -> !allowedCols.contains(e.getKey()));
-
-            if (updatable.isEmpty()) {
-                continue;
-            }
+            updatable.remove("id");
 
             Map<String, Object> converted = new LinkedHashMap<>();
             for (Map.Entry<String, Object> e : updatable.entrySet()) {
@@ -121,17 +119,43 @@ public class DbUpdateService {
                 converted.put(col, coerceValue(tableName, col, type, e.getValue()));
             }
 
-            String setClause = converted.keySet().stream()
+            // UPSERT pattern:
+            // INSERT ... ON CONFLICT (id) DO UPDATE SET col = EXCLUDED.col ...
+            // If there are no updatable columns, do nothing on conflict.
+            List<String> insertCols = new ArrayList<>();
+            insertCols.add("id");
+            insertCols.addAll(converted.keySet());
+
+            String colsClause = insertCols.stream()
                     .map(this::quoteIdentifier)
-                    .map(c -> c + " = ?")
                     .collect(Collectors.joining(", "));
 
-            String sql = "UPDATE " + quoteIdentifier(tableName) + " SET " + setClause + " WHERE id = ?";
+            String valuesClause = insertCols.stream()
+                    .map(c -> "?")
+                    .collect(Collectors.joining(", "));
 
-//            System.out.println(sql);
+            String conflictAction;
+            if (converted.isEmpty()) {
+                conflictAction = "DO NOTHING";
+            } else {
+                String updateSetClause = converted.keySet().stream()
+                        .map(this::quoteIdentifier)
+                        .map(c -> c + " = EXCLUDED." + c)
+                        .collect(Collectors.joining(", "));
+                conflictAction = "DO UPDATE SET " + updateSetClause;
+            }
 
-            List<Object> args = new ArrayList<>(converted.values());
-            args.add(coerceValue(tableName, "id", columnTypes.get("id"), id));
+            String sql = "INSERT INTO " + quoteIdentifier(tableName)
+                    + " (" + colsClause + ")"
+                    + " VALUES (" + valuesClause + ")"
+                    + " ON CONFLICT (" + quoteIdentifier("id") + ") "
+                    + conflictAction;
+
+            List<Object> args = new ArrayList<>();
+            args.add(id);
+            args.addAll(converted.values());
+
+            System.out.println(sql);
 
             jdbcTemplate.update(sql, args.toArray());
         }
